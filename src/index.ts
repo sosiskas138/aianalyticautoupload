@@ -13,6 +13,13 @@ const HOST = process.env.HOST || '0.0.0.0';
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+app.use((req, _res, next) => {
+  if (req.path === '/health') return next();
+  log.info(`→ ${req.method} ${req.originalUrl} from ${req.ip}`);
+  log.debug('Request body:', JSON.stringify(req.body));
+  next();
+});
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'webhook-autofill', timestamp: new Date().toISOString() });
 });
