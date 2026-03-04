@@ -1,5 +1,6 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { log } from '../utils/logger.js';
 
 dotenv.config();
 
@@ -17,7 +18,7 @@ function buildConnectionString(): string {
 
 const connectionString = buildConnectionString();
 const safeUrl = connectionString.replace(/:[^:@]+@/, ':****@');
-console.log('DB connection:', safeUrl);
+log.info('DB connection:', safeUrl);
 
 export const pool = new Pool({
   connectionString,

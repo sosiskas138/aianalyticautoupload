@@ -1,9 +1,9 @@
 import express from 'express';
 import { query, pool } from '../config/database.js';
+import { log } from '../utils/logger.js';
 
 const router = express.Router();
 
-// ─── Кэш organizationId → projectId (в памяти, сбрасывается при рестарте) ───
 const projectCache = new Map<string, string>();
 const pendingCreates = new Map<string, Promise<string | null>>();
 
@@ -56,6 +56,7 @@ async function createProjectForOrg(
   }
   if (!insert.rows.length) return null;
   const newId = (insert.rows[0] as { id: string }).id;
+  log.info(`Project created: ${newId} for org ${organizationId} (${name})`);
   try {
     await query(
       'INSERT INTO webhook_project_mapping (organization_id, project_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
@@ -72,11 +73,15 @@ async function resolveProjectId(body: Record<string, unknown>): Promise<string |
 
   if (organizationId) {
     const cached = projectCache.get(organizationId);
-    if (cached) return cached;
+    if (cached) {
+      log.debug(`Project resolved from cache: ${cached} for org ${organizationId}`);
+      return cached;
+    }
 
     const found = await findProjectByOrgId(organizationId);
     if (found) {
       projectCache.set(organizationId, found);
+      log.debug(`Project resolved from DB: ${found} for org ${organizationId}`);
       return found;
     }
   }
@@ -84,7 +89,6 @@ async function resolveProjectId(body: Record<string, unknown>): Promise<string |
   if (defaultProjectId) return defaultProjectId;
 
   if (autoCreate && organizationId) {
-    // Защита от гонки: если уже создаём проект для этой организации — ждём тот же промис
     const pending = pendingCreates.get(organizationId);
     if (pending) return pending;
 
@@ -99,7 +103,7 @@ async function resolveProjectId(body: Record<string, unknown>): Promise<string |
         return id;
       })
       .catch((e) => {
-        console.error('Auto-create project failed:', e);
+        log.error('Auto-create project failed:', e);
         pendingCreates.delete(organizationId);
         return null;
       });
@@ -111,7 +115,7 @@ async function resolveProjectId(body: Record<string, unknown>): Promise<string |
   return null;
 }
 
-// ─── Очередь батчинга: собираем записи и вставляем пачкой ───
+// ─── Очередь батчинга ───
 interface CallRecord {
   projectId: string;
   callId: string;
@@ -136,6 +140,8 @@ const FLUSH_INTERVAL_MS = 200;
 async function flushQueue(): Promise<void> {
   if (insertQueue.length === 0) return;
   const batch = insertQueue.splice(0, BATCH_SIZE);
+
+  log.debug(`Flushing batch: ${batch.length} records`);
 
   const values = batch.map((_, idx) => {
     const b = idx * 13;
@@ -173,8 +179,9 @@ async function flushQueue(): Promise<void> {
         payload = COALESCE(EXCLUDED.payload, calls.payload)`,
       params
     );
+    log.info(`Batch inserted: ${batch.length} calls`);
   } catch (e) {
-    console.error('Batch insert error, falling back to single inserts:', (e as Error).message);
+    log.error('Batch insert error, falling back to single inserts:', (e as Error).message);
     for (const r of batch) {
       try {
         await pool.query(
@@ -196,8 +203,9 @@ async function flushQueue(): Promise<void> {
            r.callListName, r.skillBase, r.callAt, r.durationSeconds,
            r.status, r.hangupReason, r.isLead, r.recordUrl, r.payload]
         );
+        log.debug(`Single insert OK: ${r.callId}`);
       } catch (e2) {
-        console.error('Single insert error:', r.callId, (e2 as Error).message);
+        log.error('Single insert error:', r.callId, (e2 as Error).message);
       }
     }
   }
@@ -230,11 +238,13 @@ router.post('/', async (req, res) => {
   try {
     const body = req.body as Record<string, unknown>;
     if (!body || typeof body !== 'object') {
+      log.warn('Invalid JSON body received');
       return res.status(400).json({ error: 'Invalid JSON body' });
     }
 
     const projectId = await resolveProjectId(body);
     if (!projectId) {
+      log.warn('No project found for webhook, orgId:', body.organizationId);
       return res.status(503).json({
         error: 'Webhook not configured: set WEBHOOK_PROJECT_ID or WEBHOOK_AUTO_CREATE_PROJECT=1',
       });
@@ -246,11 +256,13 @@ router.post('/', async (req, res) => {
     const call = body.call as Record<string, unknown> | undefined;
 
     if (!call || !contact || !callList) {
+      log.warn('Missing required fields in webhook body');
       return res.status(400).json({ error: 'Missing required fields: call, contact, callList' });
     }
 
     const callId = call.id as string;
     if (!callId) {
+      log.warn('Missing call.id in webhook body');
       return res.status(400).json({ error: 'Missing call.id' });
     }
 
@@ -284,9 +296,11 @@ router.post('/', async (req, res) => {
       isLead, recordUrl, payload,
     });
 
+    log.info(`Webhook received: call=${callId} phone=${phoneNormalized} project=${projectId} lead=${isLead} list=${callListName}`);
+
     res.status(200).json({ ok: true, external_call_id: callId, project_id: projectId });
   } catch (error: unknown) {
-    console.error('Webhook error:', error);
+    log.error('Webhook error:', error);
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Internal server error',
     });
