@@ -1,7 +1,5 @@
 #!/bin/sh
 set -e
 cd /app
-if [ -n "$DATABASE_URL" ]; then
-  node scripts/migrate.mjs || true
-fi
+node scripts/migrate.mjs || true
 exec node dist/index.js

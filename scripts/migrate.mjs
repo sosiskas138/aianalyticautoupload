@@ -7,14 +7,19 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.join(__dirname, '..', 'migrations');
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  console.error('DATABASE_URL is required');
-  process.exit(1);
+function buildConnectionString() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const user = process.env.POSTGRES_USER || 'postgres';
+  const password = process.env.POSTGRES_PASSWORD || '';
+  const host = process.env.POSTGRES_HOST || 'localhost';
+  const port = process.env.POSTGRES_PORT || '5432';
+  const db = process.env.POSTGRES_DB || 'telemarketing_analytics';
+  return `postgresql://${user}:${password}@${host}:${port}/${db}`;
 }
 
+const connectionString = buildConnectionString();
 const pool = new pg.Pool({ connectionString });
-// Только файлы в корне migrations/ (001, 002, 003) — дополнения к уже существующей базе. Не трогаем standalone/.
+
 const files = fs.readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
   .sort();
