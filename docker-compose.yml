@@ -1,0 +1,9 @@
+services:
+  webhook:
+    build: .
+    ports:
+      - "3002:3002"
+    env_file: .env
+    # network_mode: host — раскомментировать, если БД на том же сервере (localhost)
+    # в этом случае убрать секцию ports (порт и так будет на хосте)
+    restart: unless-stopped
