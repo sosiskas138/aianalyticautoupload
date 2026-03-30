@@ -1,6 +1,18 @@
 services:
   webhook:
     build: .
-    network_mode: host
     env_file: .env
+    ports:
+      - "127.0.0.1:3002:3002"
+    networks:
+      - telemarketing-network
+      - retail-network
     restart: unless-stopped
+
+networks:
+  telemarketing-network:
+    external: true
+    name: telemarketing_telemarketing-network
+  retail-network:
+    external: true
+    name: letopisretail_retail-network
