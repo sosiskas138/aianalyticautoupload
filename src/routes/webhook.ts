@@ -4,6 +4,54 @@ import { log } from '../utils/logger.js';
 
 const router = express.Router();
 
+// --- Empty status alert ---
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '8233600919:AAEu3g47ozU5d0tPach8FcexbptGn04mNd8';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '-1003809075389';
+
+let emptyStatusCount = 0;
+let emptyStatusProjects = new Map<string, number>();
+let lastAlertTime = 0;
+const ALERT_INTERVAL_MS = 5 * 60 * 1000;
+const ALERT_THRESHOLD = 10;
+
+async function sendTelegramAlert(text: string) {
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+    });
+  } catch (e) {
+    log.error('Telegram alert error:', e);
+  }
+}
+
+function trackEmptyStatus(projectName: string) {
+  emptyStatusCount++;
+  emptyStatusProjects.set(projectName, (emptyStatusProjects.get(projectName) || 0) + 1);
+
+  const now = Date.now();
+  if (emptyStatusCount >= ALERT_THRESHOLD && (now - lastAlertTime) > ALERT_INTERVAL_MS) {
+    const lines = Array.from(emptyStatusProjects.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, cnt]) => `  ${name}: ${cnt}`);
+
+    sendTelegramAlert(
+      `\u26a0\ufe0f <b>Webhook: пустой status у ${emptyStatusCount} звонков</b>\n` +
+      `Вебхуки приходят без call.status и call.duration.\n\n` +
+      `Проекты:\n${lines.join('\n')}\n\n` +
+      `Возможен сбой на стороне платформы trySasha.`
+    );
+
+    lastAlertTime = now;
+    emptyStatusCount = 0;
+    emptyStatusProjects.clear();
+  }
+}
+
+
+
 const projectCache = new Map<string, string>();
 const pendingCreates = new Map<string, Promise<string | null>>();
 
@@ -357,6 +405,13 @@ router.post('/', async (req, res) => {
       skillBase, callAt, durationSeconds, status, hangupReason,
       isLead, needsReview, recordUrl, payload,
     });
+
+
+    // Track empty status for alerting
+    if (!rawStatus && !durationSeconds) {
+      const projName = callListName || projectId;
+      trackEmptyStatus(projName);
+    }
 
     log.info(`Webhook received: call=${callId} phone=${phoneNormalized} project=${projectId} lead=${isLead} list=${callListName}`);
 
