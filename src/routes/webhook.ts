@@ -331,19 +331,29 @@ router.post('/', async (req, res) => {
     }
 
     const type = body.type as string;
-    const callList = body.callList as Record<string, unknown> | undefined;
-    const contact = body.contact as Record<string, unknown> | undefined;
-    const call = body.call as Record<string, unknown> | undefined;
+    const callList = (body.callList || body.call_list || {}) as Record<string, unknown>;
+    const contact = (body.contact || {}) as Record<string, unknown>;
+    const call = (body.call || {}) as Record<string, unknown>;
 
-    if (!call || !contact || !callList) {
-      log.warn('Missing required fields in webhook body');
-      return res.status(400).json({ error: 'Missing required fields: call, contact, callList' });
+    // Fallback: try to extract from nested structures
+    if (!contact.phone && call.callSession) {
+      const session = call.callSession as Record<string, unknown>;
+      const sessionContact = session.contact as Record<string, unknown> | undefined;
+      if (sessionContact?.phone) contact.phone = sessionContact.phone;
+      if (!callList.name && sessionContact?.callList) {
+        const cl = sessionContact.callList as Record<string, unknown>;
+        if (cl.name) callList.name = cl.name;
+      }
     }
 
-    const callId = call.id as string;
-    if (!callId) {
-      log.warn('Missing call.id in webhook body');
-      return res.status(400).json({ error: 'Missing call.id' });
+    // Try phone from body directly
+    if (!contact.phone && body.phone) contact.phone = body.phone;
+
+    const callId = (call.id || body.id || `auto_${Date.now()}_${Math.random().toString(36).slice(2,8)}`) as string;
+
+    if (!contact.phone) {
+      log.warn('No phone found in webhook body');
+      return res.status(400).json({ error: 'Missing phone number' });
     }
 
     const phoneRaw = String(contact.phone ?? '');
