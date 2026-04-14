@@ -423,7 +423,7 @@ router.post('/', async (req, res) => {
       let typeName: string | null = null;
       let typePrice = 0;
       if (clLower.includes('лпр')) { typeName = 'ЛПР'; typePrice = 4; }
-      else if (clLower.includes('конкурент')) { typeName = 'Конкуренты'; typePrice = 12; }
+      else if (clLower.includes('конкурент') || clLower.includes('гцк')) { typeName = 'Конкуренты'; typePrice = 12; }
       else if (clLower.includes('выгрузк') || clLower.includes('ежедневн')) { typeName = 'Выгрузка / ежедневные контакты'; typePrice = 7.5; }
       else if (clLower.includes('база клиента')) { typeName = 'База клиента'; typePrice = 0; }
 
