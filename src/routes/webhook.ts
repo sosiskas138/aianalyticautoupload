@@ -317,6 +317,7 @@ function enqueueInsert(record: CallRecord): void {
 router.post('/', async (req, res) => {
   try {
     const body = req.body as Record<string, unknown>;
+    log.info("RAW_BODY: " + JSON.stringify(body).slice(0, 5000));
     if (!body || typeof body !== 'object') {
       log.warn('Invalid JSON body received');
       return res.status(400).json({ error: 'Invalid JSON body' });
@@ -416,6 +417,30 @@ router.post('/', async (req, res) => {
       isLead, needsReview, recordUrl, payload,
     });
 
+    // ─── Auto-create supplier (база) by call_list name ───
+    if (callListName && projectId) {
+      const clLower = callListName.toLowerCase();
+      let autoPrice: number | null = null;
+      if (clLower.includes('лпр')) autoPrice = 4;
+      else if (clLower.includes('конкурент')) autoPrice = 12;
+      else if (clLower.includes('выгрузк') || clLower.includes('ежедневн')) autoPrice = 7.5;
+      else if (clLower.includes('база клиента')) autoPrice = 0;
+
+      if (autoPrice !== null) {
+        try {
+          const existing = await query('SELECT id FROM suppliers WHERE project_id = $1 AND name = $2', [projectId, callListName]);
+          let supplierId: string;
+          if (existing.rows.length > 0) {
+            supplierId = existing.rows[0].id;
+          } else {
+            const res = await query('INSERT INTO suppliers (project_id, name, price_per_contact) VALUES ($1, $2, $3) RETURNING id', [projectId, callListName, autoPrice]);
+            supplierId = res.rows[0].id;
+            log.info(`Auto-created supplier: "${callListName}" price=${autoPrice} for project ${projectId}`);
+          }
+          await query('INSERT INTO supplier_numbers (project_id, supplier_id, phone_raw, phone_normalized) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING', [projectId, supplierId, phoneRaw, phoneNormalized]);
+        } catch (e) { /* don't fail webhook */ }
+      }
+    }
 
     // Track empty status for alerting
     if (!rawStatus && !durationSeconds) {
