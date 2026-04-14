@@ -417,25 +417,26 @@ router.post('/', async (req, res) => {
       isLead, needsReview, recordUrl, payload,
     });
 
-    // ─── Auto-create supplier (база) by call_list name ───
+    // ─── Auto-assign to typed supplier (4 types) by call_list name ───
     if (callListName && projectId) {
       const clLower = callListName.toLowerCase();
-      let autoPrice: number | null = null;
-      if (clLower.includes('лпр')) autoPrice = 4;
-      else if (clLower.includes('конкурент')) autoPrice = 12;
-      else if (clLower.includes('выгрузк') || clLower.includes('ежедневн')) autoPrice = 7.5;
-      else if (clLower.includes('база клиента')) autoPrice = 0;
+      let typeName: string | null = null;
+      let typePrice = 0;
+      if (clLower.includes('лпр')) { typeName = 'ЛПР'; typePrice = 4; }
+      else if (clLower.includes('конкурент')) { typeName = 'Конкуренты'; typePrice = 12; }
+      else if (clLower.includes('выгрузк') || clLower.includes('ежедневн')) { typeName = 'Выгрузка / ежедневные контакты'; typePrice = 7.5; }
+      else if (clLower.includes('база клиента')) { typeName = 'База клиента'; typePrice = 0; }
 
-      if (autoPrice !== null) {
+      if (typeName) {
         try {
-          const existing = await query('SELECT id FROM suppliers WHERE project_id = $1 AND name = $2', [projectId, callListName]);
+          const existing = await query('SELECT id FROM suppliers WHERE project_id = $1 AND name = $2', [projectId, typeName]);
           let supplierId: string;
           if (existing.rows.length > 0) {
             supplierId = existing.rows[0].id;
           } else {
-            const res = await query('INSERT INTO suppliers (project_id, name, price_per_contact) VALUES ($1, $2, $3) RETURNING id', [projectId, callListName, autoPrice]);
+            const res = await query('INSERT INTO suppliers (project_id, name, price_per_contact) VALUES ($1, $2, $3) RETURNING id', [projectId, typeName, typePrice]);
             supplierId = res.rows[0].id;
-            log.info(`Auto-created supplier: "${callListName}" price=${autoPrice} for project ${projectId}`);
+            log.info(`Auto-created typed supplier: "${typeName}" price=${typePrice} for project ${projectId}`);
           }
           await query('INSERT INTO supplier_numbers (project_id, supplier_id, phone_raw, phone_normalized) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING', [projectId, supplierId, phoneRaw, phoneNormalized]);
         } catch (e) { /* don't fail webhook */ }
