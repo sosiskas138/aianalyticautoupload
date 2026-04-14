@@ -417,32 +417,6 @@ router.post('/', async (req, res) => {
       isLead, needsReview, recordUrl, payload,
     });
 
-    // ─── Auto-assign to typed supplier (4 types) by call_list name ───
-    if (callListName && projectId) {
-      const clLower = callListName.toLowerCase();
-      let typeName: string | null = null;
-      let typePrice = 0;
-      if (clLower.includes('лпр')) { typeName = 'ЛПР'; typePrice = 4; }
-      else if (clLower.includes('конкурент') || clLower.includes('гцк')) { typeName = 'Конкуренты'; typePrice = 12; }
-      else if (clLower.includes('выгрузк') || clLower.includes('ежедневн')) { typeName = 'Выгрузка / ежедневные контакты'; typePrice = 7.5; }
-      else if (clLower.includes('база клиента')) { typeName = 'База клиента'; typePrice = 0; }
-
-      if (typeName) {
-        try {
-          const existing = await query('SELECT id FROM suppliers WHERE project_id = $1 AND name = $2', [projectId, typeName]);
-          let supplierId: string;
-          if (existing.rows.length > 0) {
-            supplierId = existing.rows[0].id;
-          } else {
-            const res = await query('INSERT INTO suppliers (project_id, name, price_per_contact) VALUES ($1, $2, $3) RETURNING id', [projectId, typeName, typePrice]);
-            supplierId = res.rows[0].id;
-            log.info(`Auto-created typed supplier: "${typeName}" price=${typePrice} for project ${projectId}`);
-          }
-          await query('INSERT INTO supplier_numbers (project_id, supplier_id, phone_raw, phone_normalized) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING', [projectId, supplierId, phoneRaw, phoneNormalized]);
-        } catch (e) { /* don't fail webhook */ }
-      }
-    }
-
     // Track empty status for alerting
     if (!rawStatus && !durationSeconds) {
       const projName = callListName || projectId;
