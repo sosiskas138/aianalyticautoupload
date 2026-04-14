@@ -423,7 +423,68 @@ router.post('/', async (req, res) => {
       trackEmptyStatus(projName);
     }
 
-    log.info(`Webhook received: call=${callId} phone=${phoneNormalized} project=${projectId} lead=${isLead} list=${callListName}`);
+
+    // ─── Auto-assign phone to supplier by call_list category ───
+    if (callListName && projectId) {
+      const clLower = callListName.toLowerCase();
+      let category: string | null = null;
+      let defaultPrice = 0;
+      let isGck = false;
+
+      if (clLower.includes('лпр')) {
+        category = 'lpr'; defaultPrice = 4;
+      } else if (clLower.includes('конкурент') || clLower.includes('гцк')) {
+        category = 'konkurent'; defaultPrice = 12; isGck = true;
+      } else if (clLower.includes('выгрузк') || clLower.includes('ежедневн')) {
+        category = 'vygruzka'; defaultPrice = 7.5;
+      } else if (clLower.includes('база клиента')) {
+        category = 'client'; defaultPrice = 0;
+      }
+
+      if (category) {
+        try {
+          // Find existing supplier for this category in this project
+          let supplierId: string | null = null;
+
+          if (category === 'konkurent') {
+            // Look for ГЦК or Конкуренты suppliers (is_gck=true or name matches)
+            const res = await query(
+              `SELECT id FROM suppliers WHERE project_id = $1 AND (is_gck = true OR LOWER(name) LIKE '%конкурент%' OR LOWER(name) LIKE '%гцк%') LIMIT 1`,
+              [projectId]
+            );
+            if (res.rows.length > 0) supplierId = res.rows[0].id;
+          } else if (category === 'lpr') {
+            const res = await query(`SELECT id FROM suppliers WHERE project_id = $1 AND LOWER(name) LIKE '%лпр%' LIMIT 1`, [projectId]);
+            if (res.rows.length > 0) supplierId = res.rows[0].id;
+          } else if (category === 'vygruzka') {
+            const res = await query(`SELECT id FROM suppliers WHERE project_id = $1 AND (LOWER(name) LIKE '%выгрузк%' OR LOWER(name) LIKE '%ежедневн%') LIMIT 1`, [projectId]);
+            if (res.rows.length > 0) supplierId = res.rows[0].id;
+          } else if (category === 'client') {
+            const res = await query(`SELECT id FROM suppliers WHERE project_id = $1 AND LOWER(name) LIKE '%база клиента%' LIMIT 1`, [projectId]);
+            if (res.rows.length > 0) supplierId = res.rows[0].id;
+          }
+
+          // Create if not found
+          if (!supplierId) {
+            const names: Record<string, string> = { konkurent: 'Конкуренты', lpr: 'ЛПР', vygruzka: 'Выгрузка / ежедневные контакты', client: 'База клиента' };
+            const res = await query(
+              'INSERT INTO suppliers (project_id, name, price_per_contact, is_gck) VALUES ($1, $2, $3, $4) RETURNING id',
+              [projectId, names[category], defaultPrice, isGck]
+            );
+            supplierId = res.rows[0].id;
+            log.info(`Auto-created supplier: "${names[category]}" price=${defaultPrice} for project ${projectId}`);
+          }
+
+          // Link phone to supplier
+          await query(
+            'INSERT INTO supplier_numbers (project_id, supplier_id, phone_raw, phone_normalized) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+            [projectId, supplierId, phoneRaw, phoneNormalized]
+          );
+        } catch (e) { /* don't fail webhook */ }
+      }
+    }
+
+        log.info(`Webhook received: call=${callId} phone=${phoneNormalized} project=${projectId} lead=${isLead} list=${callListName}`);
 
     res.status(200).json({ ok: true, external_call_id: callId, project_id: projectId });
   } catch (error: unknown) {
